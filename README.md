@@ -1,6 +1,6 @@
 #实验完成情况
     lab1已完成(扩展未做)
-    lab2未完成
+    lab2已完成(扩展未做)
 
 #ucore_lab
     create a new repository on the command line
