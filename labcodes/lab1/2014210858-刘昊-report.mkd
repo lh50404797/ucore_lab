@@ -1,0 +1,340 @@
+#name:刘昊
+#class:计研145班
+#student number:2014210858
+
+#lab1 report
+## [练习1]
+
+[练习1.1] 操作系统镜像文件 ucore.img 是如何一步一步生成的?(需要比较详细地解释 Makefile 中
+每一条相关命令和命令参数的含义,以及说明命令导致的结果)
+(与答案不同之处：
+  练习1.1的答案已经写的非常详细了，没有改进之处
+  看完makefile和答案，后对ucore.img的组成有了初步了解。
+  ucore.img由kernel和bootblock组成，bootblock需要使用sign进行标记使得qemu的bios可以识别bootblock并运行其内的引导程序。ucore.img有1000快，每块512b,bootblock在第一块，之后是kernel，最后多余的块用0填充
+)
+
+```
+bin/ucore.img
+| 生成ucore.img的相关代码为
+| $(UCOREIMG): $(kernel) $(bootblock)
+|	$(V)dd if=/dev/zero of=$@ count=10000
+|	$(V)dd if=$(bootblock) of=$@ conv=notrunc
+|	$(V)dd if=$(kernel) of=$@ seek=1 conv=notrunc
+|
+| 为了生成ucore.img，首先需要生成bootblock、kernel
+| $(call create_target,ucore.img) 生成了ucore.img
+|
+|>	bin/bootblock
+|	| 生成bootblock的相关代码为
+|	| $(bootblock): $(call toobj,$(bootfiles)) | $(call totarget,sign)
+|	|	@echo + ld $@
+|	|	$(V)$(LD) $(LDFLAGS) -N -e start -Ttext 0x7C00 $^ \
+|	|		-o $(call toobj,bootblock)
+|	|	@$(OBJDUMP) -S $(call objfile,bootblock) > \
+|	|		$(call asmfile,bootblock)
+|	|	@$(OBJCOPY) -S -O binary $(call objfile,bootblock) \
+|	|		$(call outfile,bootblock)
+|	|	@$(call totarget,sign) $(call outfile,bootblock) $(bootblock)
+|	|
+|	| 为了生成bootblock，首先需要生成bootasm.o、bootmain.o、sign
+|	| $(call create_target,bootblock) 生成了bootblock 
+|   | 
+|	|>	obj/boot/bootasm.o, obj/boot/bootmain.o
+|	|	| 生成bootasm.o,bootmain.o的相关makefile代码为
+|	|	| bootfiles = $(call listf_cc,boot) 
+|	|	| $(foreach f,$(bootfiles),$(call cc_compile,$(f),$(CC),\
+|	|	|	$(CFLAGS) -Os -nostdinc))
+|	|	| 实际代码由宏批量生成
+|	|	| 
+|	|	| 生成bootasm.o需要bootasm.S
+|	|	| 实际命令为
+|	|	| gcc -Iboot/ -fno-builtin -Wall -ggdb -m32 -gstabs \
+|	|	| 	-nostdinc  -fno-stack-protector -Ilibs/ -Os -nostdinc \
+|	|	| 	-c boot/bootasm.S -o obj/boot/bootasm.o
+|	|	| 其中关键的参数为
+|	|	| 	-ggdb  生成可供gdb使用的调试信息。这样才能用qemu+gdb来调试bootloader or ucore。
+|	|	|	-m32  生成适用于32位环境的代码。我们用的模拟硬件是32bit的80386，所以ucore也要是32位的软件。
+|	|	| 	-gstabs  生成stabs格式的调试信息。这样要ucore的monitor可以显示出便于开发者阅读的函数调用栈信息
+|	|	| 	-nostdinc  不使用标准库。标准库是给应用程序用的，我们是编译ucore内核，OS内核是提供服务的，所以所有的服务要自给自足。
+|	|	|	-fno-stack-protector  不生成用于检测缓冲区溢出的代码。这是for 应用程序的，我们是编译内核，ucore内核好像还用不到此功能。
+|	|	| 	-Os  为减小代码大小而进行优化。根据硬件spec，主引导扇区只有512字节，我们写的简单bootloader的最终大小不能大于510字节。
+|	|	| 	-I<dir>  添加搜索头文件的路径
+|	|	| 
+|	|	| 生成bootmain.o需要bootmain.c
+|	|	| 实际命令为
+|	|	| gcc -Iboot/ -fno-builtin -Wall -ggdb -m32 -gstabs -nostdinc \
+|	|	| 	-fno-stack-protector -Ilibs/ -Os -nostdinc \
+|	|	| 	-c boot/bootmain.c -o obj/boot/bootmain.o
+|	|	| 新出现的关键参数有
+|	|	| 	-fno-builtin  除非用__builtin_前缀，
+|	|	|	              否则不进行builtin函数的优化
+|	|
+|	|>	bin/sign
+|	|	| 生成sign工具的makefile代码为
+|	|	| $(call add_files_host,tools/sign.c,sign,sign)
+|	|	| $(call create_target_host,sign,sign)
+|	|	| 
+|	|	| 实际命令为
+|	|	| gcc -Itools/ -g -Wall -O2 -c tools/sign.c \
+|	|	| 	-o obj/sign/tools/sign.o
+|	|	| gcc -g -Wall -O2 obj/sign/tools/sign.o -o bin/sign
+|	|
+|	| 首先生成bootblock.o
+|	| ld -m    elf_i386 -nostdlib -N -e start -Ttext 0x7C00 \
+|	|	obj/boot/bootasm.o obj/boot/bootmain.o -o obj/bootblock.o
+|	| 其中关键的参数为
+|	|	-m <emulation>  模拟为i386上的连接器
+|	|	-nostdlib  不使用标准库
+|	|	-N  设置代码段和数据段均可读写
+|	|	-e <entry>  指定入口
+|	|	-Ttext  制定代码段开始位置
+|	|
+|	| 拷贝二进制代码bootblock.o到bootblock.out
+|	| objcopy -S -O binary obj/bootblock.o obj/bootblock.out
+|	| 其中关键的参数为
+|	|	-S  移除所有符号和重定位信息
+|	|	-O <bfdname>  指定输出格式
+|	|
+|	| 使用sign工具处理bootblock.out，生成bootblock
+|	| bin/sign obj/bootblock.out bin/bootblock
+|
+|>	bin/kernel
+|	| 生成kernel的相关代码为
+|	| $(kernel): tools/kernel.ld
+|	| $(kernel): $(KOBJS)
+|	| 	@echo + ld $@
+|	| 	$(V)$(LD) $(LDFLAGS) -T tools/kernel.ld -o $@ $(KOBJS)
+|	| 	@$(OBJDUMP) -S $@ > $(call asmfile,kernel)
+|	| 	@$(OBJDUMP) -t $@ | $(SED) '1,/SYMBOL TABLE/d; s/ .* / /; \
+|	| 		/^$$/d' > $(call symfile,kernel)
+|	| 
+|	| 为了生成kernel，首先需要 kernel.ld init.o readline.o stdio.o kdebug.o
+|	|	kmonitor.o panic.o clock.o console.o intr.o picirq.o trap.o
+|	|	trapentry.o vectors.o pmm.o  printfmt.o string.o
+|	| kernel.ld已存在
+|	|
+|	|>	obj/kern/*/*.o 
+|	|	| 生成这些.o文件的相关makefile代码为
+|	|	| $(call add_files_cc,$(call listf_cc,$(KSRCDIR)),kernel,\
+|	|	|	$(KCFLAGS))
+|	|	| 这些.o生成方式和参数均类似，仅举init.o为例，其余不赘述
+|	|>	obj/kern/init/init.o
+|	|	| 编译需要init.c
+|	|	| 实际命令为
+|	|	|	gcc -Ikern/init/ -fno-builtin -Wall -ggdb -m32 \
+|	|	|		-gstabs -nostdinc  -fno-stack-protector \
+|	|	|		-Ilibs/ -Ikern/debug/ -Ikern/driver/ \
+|	|	|		-Ikern/trap/ -Ikern/mm/ -c kern/init/init.c \
+|	|	|		-o obj/kern/init/init.o
+|	| 
+|	| 生成kernel时，makefile的几条指令中有@前缀的都不必需
+|	| 必需的命令只有
+|	| ld -m    elf_i386 -nostdlib -T tools/kernel.ld -o bin/kernel \
+|	| 	obj/kern/init/init.o obj/kern/libs/readline.o \
+|	| 	obj/kern/libs/stdio.o obj/kern/debug/kdebug.o \
+|	| 	obj/kern/debug/kmonitor.o obj/kern/debug/panic.o \
+|	| 	obj/kern/driver/clock.o obj/kern/driver/console.o \
+|	| 	obj/kern/driver/intr.o obj/kern/driver/picirq.o \
+|	| 	obj/kern/trap/trap.o obj/kern/trap/trapentry.o \
+|	| 	obj/kern/trap/vectors.o obj/kern/mm/pmm.o \
+|	| 	obj/libs/printfmt.o obj/libs/string.o
+|	| 其中新出现的关键参数为
+|	|	-T <scriptfile>  让连接器使用指定的脚本
+|
+| 生成一个有10000个块的文件，每个块默认512字节，用0填充
+| dd if=/dev/zero of=bin/ucore.img count=10000
+|
+| 把bootblock中的内容写到第一个块
+| dd if=bin/bootblock of=bin/ucore.img conv=notrunc
+|
+| 从第二个块开始写kernel中的内容
+| dd if=bin/kernel of=bin/ucore.img seek=1 conv=notrunc
+```
+[练习1.2] 一个被系统认为是符合规范的硬盘主引导扇区的特征是什么?
+
+从sign.c的代码来看，一个磁盘主引导扇区只有512字节。且
+第510个（倒数第二个）字节是0x55，
+第511个（倒数第一个）字节是0xAA。
+
+## [练习2]
+
+[练习2.1] 从 CPU 加电后执行的第一条指令开始,单步跟踪 BIOS 的执行。
+
+改写moninit文件,将其改为(0xffff0是8086执行的第一条指令)
+file bin/kernel
+target remote :1234
+set architecture i8086
+b *0xffff0
+x /2i $pc
+
+改写makefile
+在调用qemu时增加`-d in_asm -D q.log`参数，便可以将运行的汇编指令保存在q.log中。
+
+lab1目录内输入make debug-mon
+gdb -q -tui -x tools/moninit
+
+得到如下输出：
+The target architecture is assumed to be i8086
+Breakpoint 1 at 0xffff0
+=> 0xfff0:      add    %al,(%bx,%si)
+   0xfff2:      add    %al,(%bx,%si)
+   
+[练习2.2] 在初始化位置0x7c00 设置实地址断点,测试断点正常。
+改写moninit文件
+将b *0xffff0 改为 b *0x7c00
+下面增加
+c
+set architecture i386
+（b *0x7c00 是qemu的bios加载bootloader到内存的位置，是bootloader的第一条指令的地址,执行的代码在boot/bootasm.S的start地址处）
+
+lab1目录内输入make debug-mon
+gdb -q -tui -x tools/moninit
+
+得到如下的输出：
+The target architecture is assumed to be i8086
+Breakpoint 1 at 0x7c00
+
+Breakpoint 1, 0x00007c00 in ?? ()
+=> 0x7c00:      cli    
+   0x7c01:      cld   
+   
+[练习2.3] 从0x7c00开始跟踪代码运行,将单步跟踪反汇编得到的代码与bootasm.S和 bootblock.asm进行比较。
+
+不断使用ni和x /5i $pc 看当前执行的指令，发现和bootasm.S中的代码一致 
+
+发现在执行到0x7c00之前执行了很多汇编指令才执行到0x7c00  
+
+[练习2.4]自己找一个bootloader或内核中的代码位置，设置断点并进行测试。
+
+改写moninit文件，改为
+file obj/bootblock.o
+target remote :1234
+set architecture i8086
+break bootmain
+c
+x /2i $pc
+set architecture i386
+
+尝试调试bootmain
+
+## [练习3]
+分析bootloader 进入保护模式的过程。
+
+进入bootloader后首先
+关中断然后将DS, ES, SS（数据段，额外段，栈段）清0
+
+开启A20：通过将键盘控制器上的A20线置于高电位，全部32条地址线可用，
+可以访问4G的内存空间。
+
+初始化GDT表：一个简单的GDT表和其描述符已经静态储存在引导区中，载入即可
+```
+	    lgdt gdtdesc
+```  
+设置了bootloader和kernel的代码段和数据段地址
+
+进入保护模式：通过将cr0寄存器PE位置1便开启了保护模式
+```
+	    movl %cr0, %eax
+	    orl $CR0_PE_ON, %eax
+	    movl %eax, %cr0
+```
+
+通过长跳转更新cs的基地址，处理器进入32位模式
+```
+	 ljmp $PROT_MODE_CSEG, $protcseg
+	.code32
+	protcseg:
+```
+
+设置保护模式数据段寄存器：DS,ES FS GS SS
+
+建立堆栈，栈底为0,栈顶为0x7c00
+
+转到保护模式完成，调用bootmain
+
+## [练习4]
+分析bootloader加载ELF格式的OS的过程。
+
+首先看readsect函数，这个函数把单个指定扇区的内容读取到一个内存区域
+readsect内使用inb函数读取io控制端口的状态，用outb向io控制端口写入扇区号
+用insl从io数据端口批量读出数据到制定内存区域
+
+readseg简单包装了readsect，可以从设备读取任意长度的内容。
+
+看bootmain函数
+先读取elf文件头
+将elf头中描述的各程序段读入内存，读取过程中，将程序段描述符描述的文件中的文件块读取到程序段描述符指定的内存区域
+调用elf文件头制定的程序入口
+（以上内存地址elf文件中都是虚地址，读出和调用时直接强行转化成物理地址）
+
+## [练习5] 
+实现函数调用堆栈跟踪函数 
+
+实现如下：
+    uint32_t ebp=read_ebp(),eip=read_eip(),i=0;
+    for(; i<STACKFRAME_DEPTH && ebp != 0; i++){
+        cprintf("ebp:0x%08x eip:0x%08x args:0x%08x 0x%08x 0x%08x 0x%08x\n", ebp, eip,
+            ((uint32_t *)ebp)[2],((uint32_t *)ebp)[3],((uint32_t *)ebp)[4],((uint32_t *)ebp)[5]);
+        print_debuginfo(eip - 1);
+        eip = ((uint32_t *)ebp)[1];
+        ebp = ((uint32_t *)ebp)[0];
+    }
+阅读小节“函数堆栈” 后知道，调用堆栈ebp存的是上一个函数的ebp,ebp+4存的是上一个函数的入口地址，ebp+8到ebp+22以此是本函数的参数1,参数2，参数3,参数4
+整个过程就是不断通过ebp打印本函数的参数，找到上一个函数的ebp和eip在下一次迭代中打印。最后当ebp==0时或达到栈最大调用层数后，到达整个调用栈低时停止打印
+
+运行make qemu后得到如下结果：
+Kernel executable memory footprint: 64KB
+ebp:0x00007b08 eip:0x001009a7 args:0x00010094 0x00000000 0x00007b38 0x00100092
+    kern/debug/kdebug.c:305: print_stackframe+22
+ebp:0x00007b18 eip:0x00100c7a args:0x00000000 0x00000000 0x00000000 0x00007b88
+    kern/debug/kmonitor.c:125: mon_backtrace+10
+ebp:0x00007b38 eip:0x00100092 args:0x00000000 0x00007b60 0xffff0000 0x00007b64
+    kern/init/init.c:48: grade_backtrace2+33
+ebp:0x00007b58 eip:0x001000bb args:0x00000000 0xffff0000 0x00007b84 0x00000029
+    kern/init/init.c:53: grade_backtrace1+38
+ebp:0x00007b78 eip:0x001000d9 args:0x00000000 0x00100000 0xffff0000 0x0000001d
+    kern/init/init.c:58: grade_backtrace0+23
+ebp:0x00007b98 eip:0x001000fe args:0x001032fc 0x001032e0 0x0000130a 0x00000000
+    kern/init/init.c:63: grade_backtrace+34
+ebp:0x00007bc8 eip:0x00100055 args:0x00000000 0x00000000 0x00000000 0x00010094
+    kern/init/init.c:28: kern_init+84
+ebp:0x00007bf8 eip:0x00007d68 args:0xc031fcfa 0xc08ed88e 0x64e4d08e 0xfa7502a8
+    <unknow>: -- 0x00007d67 --
+
+最后一行对应的是第一个使用堆栈的函数，bootmain.c中的bootmain。
+bootloader设置的堆栈从0x7c00开始，使用"call bootmain"转入bootmain函数。
+call指令压栈，所以bootmain中ebp为0x7bf8。
+
+## [练习6]
+完善中断初始化和处理
+
+[练习6.1] 中断向量表中一个表项占多少字节？其中哪几位代表中断处理代码的入口？
+
+中断向量表一个表项占用8字节，其中2-3字节是段选择子，0-1字节和6-7字节拼成位移，
+两者联合便是中断处理程序的入口地址。
+共256个表项，共占用256×8字节
+
+[练习6.2] 请编程完善kern/trap/trap.c中对中断向量表进行初始化的函数idt_init。
+
+代码如下：
+    extern uintptr_t __vectors[];
+    int i;
+    for(i=0; i < 256 ; i++){
+        if(i != T_SWITCH_TOK)
+            SETGATE(idt[i], 0, GD_KTEXT, __vectors[i], DPL_KERNEL);
+        else
+            SETGATE(idt[i], 0, GD_KTEXT, __vectors[i], DPL_USER);
+    }
+    lidt(&idt_pd);
+首先初始化内存中的idt,所有中断除了从用户态到内核态时的权限是用户级的，其他中断程序都是需要内核态的 
+然后使用lidt命令，把idt的地址保存在cpu中的中断向量表基址寄存器中   
+    
+
+[练习6.3] 请编程完善trap.c中的中断处理函数trap，在对时钟中断进行处理的部分填写trap函数
+
+代码如下：
+    ticks ++;
+    if (ticks % TICK_NUM == 0) {
+        print_ticks();
+    }
+ticks由clock.c中的clock_init初始化
