@@ -380,6 +380,21 @@ get_pte(pde_t *pgdir, uintptr_t la, bool create) {
     }
     return NULL;          // (8) return page table entry
 #endif
+    //首先从la中取出页目录项编号，再在页目录中取出相应的页目录项
+    pde_t *pdep = &pgdir[PDX(la)];
+    if (!(*pdep & PTE_P)) {
+        //若该pde中的标记位显示对应的pt不存在，则为此pde分配一个页，对此页引用+1,然后初始化pt,修改pde中的标记
+        struct Page *page;
+        if (!create || (page = alloc_page()) == NULL) {
+            return NULL;
+        }
+        set_page_ref(page, 1);
+        uintptr_t pa = page2pa(page);
+        memset(KADDR(pa), 0, PGSIZE);
+        *pdep = pa | PTE_U | PTE_W | PTE_P;
+    }
+    //若该目录项显示对应的页表存在，则从此页表中利用la中的页表项号取出所需的页表项
+    return &((pte_t *)KADDR(PDE_ADDR(*pdep)))[PTX(la)];
 }
 
 //get_page - get related Page struct for linear address la using PDT pgdir
@@ -425,6 +440,17 @@ page_remove_pte(pde_t *pgdir, uintptr_t la, pte_t *ptep) {
                                   //(6) flush tlb
     }
 #endif
+    //首先检查此pte对应的页是否存在，若不存在则什么也不干
+    if (*ptep & PTE_P) {
+        struct Page *page = pte2page(*ptep);
+        //则此页的引用减1,若此页的引用为0则回收此页
+        if (page_ref_dec(page) == 0) {
+            free_page(page);
+        }
+        //更新此pte，并刷新tlb
+        *ptep = 0;
+        tlb_invalidate(pgdir, la);
+    }
 }
 
 //page_remove - free an Page which is related linear address la and has an validated pte
