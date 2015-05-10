@@ -13,6 +13,6 @@
     git remote add origin https://github.com/lh50404797/ucore_lab.git git push -u origin master
     
 #how to upload code
-git add README
-git commit -m 'first commit'
-git push -u origin master
+    git add README
+    git commit -m 'first commit'
+    git push -u origin master
