@@ -3,7 +3,8 @@
     lab2已完成(扩展未做)
     lab3已完成(扩展未做)
     lab4已完成(扩展未做)
-
+    lab5已完成(扩展未做)
+    
 #ucore_lab
     create a new repository on the command line
     git init git add README.md git commit -m "first commit" git remote add origin https://github.com/lh50404797/ucore_lab.git 
