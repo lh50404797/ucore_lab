@@ -4,6 +4,7 @@
     lab3已完成(扩展未做)
     lab4已完成(扩展未做)
     lab5已完成(扩展未做)
+    lab6已完成(扩展未做)
     
 #ucore_lab
     create a new repository on the command line
